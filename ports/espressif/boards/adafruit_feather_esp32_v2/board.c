@@ -31,35 +31,15 @@
 #include "components/hal/include/hal/gpio_hal.h"
 #include "common-hal/microcontroller/Pin.h"
 
-void board_init(void) {
-    reset_board();
-}
-
-bool board_requests_safe_mode(void) {
-    return false;
-}
-
-void reset_board(void) {
-    // Turn on NeoPixel and I2C power by default.
-    gpio_set_direction(2, GPIO_MODE_DEF_OUTPUT);
-    gpio_set_level(2, true);
-}
-
-void board_deinit(void) {
-}
-
 bool espressif_board_reset_pin_number(gpio_num_t pin_number) {
-    // Pull LED down on reset rather than the default up
-    if (pin_number == 13) {
-        gpio_config_t cfg = {
-            .pin_bit_mask = BIT64(pin_number),
-            .mode = GPIO_MODE_DISABLE,
-            .pull_up_en = false,
-            .pull_down_en = true,
-            .intr_type = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&cfg);
+    if (pin_number == 2) {
+        // Turn on NeoPixel and I2C power by default.
+        gpio_set_direction(pin_number, GPIO_MODE_DEF_OUTPUT);
+        gpio_set_level(pin_number, true);
         return true;
     }
+
     return false;
 }
+
+// Use the MP_WEAK supervisor/shared/board.c versions of routines not defined here.

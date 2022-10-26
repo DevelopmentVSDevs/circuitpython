@@ -44,8 +44,11 @@ wifi_radio_obj_t common_hal_wifi_radio_obj;
 #include "components/log/include/esp_log.h"
 
 #include "supervisor/port.h"
-#include "supervisor/shared/title_bar.h"
 #include "supervisor/workflow.h"
+
+#if CIRCUITPY_STATUS_BAR
+#include "supervisor/shared/status_bar.h"
+#endif
 
 #include "esp_ipc.h"
 
@@ -56,7 +59,9 @@ wifi_radio_obj_t common_hal_wifi_radio_obj;
 static const char *TAG = "CP wifi";
 
 STATIC void schedule_background_on_cp_core(void *arg) {
-    supervisor_title_bar_request_update(false);
+    #if CIRCUITPY_STATUS_BAR
+    supervisor_status_bar_request_update(false);
+    #endif
 
     // CircuitPython's VM is run in a separate FreeRTOS task from wifi callbacks. So, we have to
     // notify the main task every time in case it's waiting for us.
@@ -167,7 +172,7 @@ void common_hal_wifi_init(bool user_initiated) {
     // Even though we just called esp_netif_create_default_wifi_sta,
     //   station mode isn't actually ready for use until esp_wifi_set_mode()
     //   is called and the configuration is loaded via esp_wifi_set_config().
-    // Set both convienence flags to false so it's not forgotten.
+    // Set both convenience flags to false so it's not forgotten.
     self->sta_mode = 0;
     self->ap_mode = 0;
 

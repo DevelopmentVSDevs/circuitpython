@@ -101,12 +101,16 @@ endif
 
 ###
 # Select which builtin modules to compile and include.
+# Keep alphabetical.
 
 ifeq ($(CIRCUITPY_AESIO),1)
 SRC_PATTERNS += aesio/%
 endif
 ifeq ($(CIRCUITPY_ALARM),1)
 SRC_PATTERNS += alarm/%
+endif
+ifeq ($(CIRCUITPY_ANALOGBUFIO),1)
+SRC_PATTERNS += analogbufio/%
 endif
 ifeq ($(CIRCUITPY_ANALOGIO),1)
 SRC_PATTERNS += analogio/%
@@ -163,8 +167,14 @@ endif
 ifeq ($(CIRCUITPY_CANIO),1)
 SRC_PATTERNS += canio/%
 endif
+ifeq ($(CIRCUITPY_COPROC),1)
+SRC_PATTERNS += coproc/%
+endif
 ifeq ($(CIRCUITPY_COUNTIO),1)
 SRC_PATTERNS += countio/%
+endif
+ifeq ($(CIRCUITPY_CYW43),1)
+SRC_PATTERNS += cyw43/%
 endif
 ifeq ($(CIRCUITPY_DIGITALIO),1)
 SRC_PATTERNS += digitalio/%
@@ -175,11 +185,8 @@ endif
 ifeq ($(CIRCUITPY_DOTENV),1)
 SRC_PATTERNS += dotenv/%
 endif
-ifeq ($(CIRCUITPY_PARALLELDISPLAY),1)
-SRC_PATTERNS += paralleldisplay/%
-endif
-ifeq ($(CIRCUITPY_VECTORIO),1)
-SRC_PATTERNS += vectorio/%
+ifeq ($(CIRCUITPY__EVE),1)
+SRC_PATTERNS += _eve/%
 endif
 ifeq ($(CIRCUITPY_FLOPPYIO),1)
 SRC_PATTERNS += floppyio/%
@@ -187,17 +194,12 @@ endif
 ifeq ($(CIRCUITPY_FRAMEBUFFERIO),1)
 SRC_PATTERNS += framebufferio/%
 endif
-ifeq ($(CIRCUITPY__EVE),1)
-SRC_PATTERNS += _eve/%
-endif
 ifeq ($(CIRCUITPY_FREQUENCYIO),1)
 SRC_PATTERNS += frequencyio/%
 endif
-
 ifeq ($(CIRCUITPY_FUTURE),1)
 SRC_PATTERNS += __future__/%
 endif
-
 ifeq ($(CIRCUITPY_GETPASS),1)
 SRC_PATTERNS += getpass/%
 endif
@@ -237,6 +239,9 @@ endif
 ifeq ($(CIRCUITPY_MDNS),1)
 SRC_PATTERNS += mdns/%
 endif
+ifeq ($(CIRCUITPY_MSGPACK),1)
+SRC_PATTERNS += msgpack/%
+endif
 ifeq ($(CIRCUITPY_NEOPIXEL_WRITE),1)
 SRC_PATTERNS += neopixel_write/%
 endif
@@ -251,6 +256,12 @@ SRC_PATTERNS += os/%
 endif
 ifeq ($(CIRCUITPY_DUALBANK),1)
 SRC_PATTERNS += dualbank/%
+endif
+ifeq ($(CIRCUITPY_PARALLELDISPLAY),1)
+SRC_PATTERNS += paralleldisplay/%
+endif
+ifeq ($(CIRCUITPY_PEW),1)
+SRC_PATTERNS += _pew/%
 endif
 ifeq ($(CIRCUITPY_PIXELBUF),1)
 SRC_PATTERNS += adafruit_pixelbuf/%
@@ -321,6 +332,9 @@ endif
 ifeq ($(CIRCUITPY_TERMINALIO),1)
 SRC_PATTERNS += terminalio/% fontio/%
 endif
+ifeq ($(CIRCUITPY_FONTIO),1)
+SRC_PATTERNS += fontio/%
+endif
 ifeq ($(CIRCUITPY_TIME),1)
 SRC_PATTERNS += time/%
 endif
@@ -351,8 +365,8 @@ endif
 ifeq ($(CIRCUITPY_USTACK),1)
 SRC_PATTERNS += ustack/%
 endif
-ifeq ($(CIRCUITPY_ZLIB),1)
-SRC_PATTERNS += zlib/%
+ifeq ($(CIRCUITPY_VECTORIO),1)
+SRC_PATTERNS += vectorio/%
 endif
 ifeq ($(CIRCUITPY_VIDEOCORE),1)
 SRC_PATTERNS += videocore/%
@@ -363,11 +377,8 @@ endif
 ifeq ($(CIRCUITPY_WIFI),1)
 SRC_PATTERNS += wifi/%
 endif
-ifeq ($(CIRCUITPY_PEW),1)
-SRC_PATTERNS += _pew/%
-endif
-ifeq ($(CIRCUITPY_MSGPACK),1)
-SRC_PATTERNS += msgpack/%
+ifeq ($(CIRCUITPY_ZLIB),1)
+SRC_PATTERNS += zlib/%
 endif
 
 # All possible sources are listed here, and are filtered by SRC_PATTERNS in SRC_COMMON_HAL
@@ -389,6 +400,9 @@ SRC_COMMON_HAL_ALL = \
 	alarm/pin/PinAlarm.c \
 	alarm/time/TimeAlarm.c \
 	alarm/touch/TouchAlarm.c \
+	alarm/coproc/CoprocAlarm.c \
+	analogbufio/BufferedIn.c \
+	analogbufio/__init__.c \
 	analogio/AnalogIn.c \
 	analogio/AnalogOut.c \
 	analogio/__init__.c \
@@ -409,6 +423,9 @@ SRC_COMMON_HAL_ALL = \
 	canio/CAN.c \
 	canio/Listener.c \
 	canio/__init__.c \
+	coproc/__init__.c \
+	coproc/Coproc.c \
+	coproc/CoprocMemory.c \
 	countio/Counter.c \
 	countio/__init__.c \
 	digitalio/DigitalInOut.c \
@@ -479,7 +496,6 @@ SRC_C += \
 
 endif
 
-
 SRC_COMMON_HAL = $(filter $(SRC_PATTERNS), $(SRC_COMMON_HAL_ALL))
 
 # These don't have corresponding files in each port but are still located in
@@ -511,6 +527,7 @@ $(filter $(SRC_PATTERNS), \
 	qrio/PixelPolicy.c \
 	qrio/QRInfo.c \
 	supervisor/RunReason.c \
+	supervisor/StatusBar.c \
 	wifi/AuthMode.c \
 	wifi/Packet.c \
 )
@@ -611,6 +628,8 @@ SRC_SHARED_MODULE_ALL = \
 	socket/__init__.c \
 	storage/__init__.c \
 	struct/__init__.c \
+	supervisor/__init__.c \
+	supervisor/StatusBar.c \
 	synthio/MidiTrack.c \
 	synthio/__init__.c \
 	terminalio/Terminal.c \

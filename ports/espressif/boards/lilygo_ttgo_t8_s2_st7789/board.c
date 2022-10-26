@@ -93,9 +93,6 @@ static void display_init(void) {
     displayio_display_obj_t *display = &displays[0].display;
     display->base.type = &displayio_display_type;
 
-    // workaround as board_init() is called before reset_port() in main.c
-    pwmout_reset();
-
     common_hal_displayio_display_construct(
         display,
         bus,
@@ -126,8 +123,6 @@ static void display_init(void) {
         false,          // SH1107_addressing
         50000           // backlight pwm frequency
         );
-
-    common_hal_never_reset_pin(&pin_GPIO33); // backlight pin
 }
 
 void board_init(void) {
@@ -141,13 +136,4 @@ void board_init(void) {
     display_init();
 }
 
-bool board_requests_safe_mode(void) {
-    return false;
-}
-
-void reset_board(void) {
-
-}
-
-void board_deinit(void) {
-}
+// Use the MP_WEAK supervisor/shared/board.c versions of routines not defined here.

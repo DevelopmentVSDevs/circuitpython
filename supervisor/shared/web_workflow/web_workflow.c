@@ -37,16 +37,19 @@
 #include "shared/timeutils/timeutils.h"
 #include "supervisor/fatfs_port.h"
 #include "supervisor/filesystem.h"
+#include "supervisor/port.h"
 #include "supervisor/shared/reload.h"
 #include "supervisor/shared/translate/translate.h"
 #include "supervisor/shared/web_workflow/web_workflow.h"
 #include "supervisor/shared/web_workflow/websocket.h"
+#include "supervisor/shared/workflow.h"
 #include "supervisor/usb.h"
 
 #include "shared-bindings/hashlib/__init__.h"
 #include "shared-bindings/hashlib/Hash.h"
 #include "shared-bindings/mdns/RemoteService.h"
 #include "shared-bindings/mdns/Server.h"
+#include "shared-bindings/microcontroller/Processor.h"
 #include "shared-bindings/socketpool/__init__.h"
 #include "shared-bindings/socketpool/Socket.h"
 #include "shared-bindings/socketpool/SocketPool.h"
@@ -77,8 +80,9 @@ typedef struct {
     enum request_state state;
     char method[8];
     char path[256];
+    char destination[256];
     char header_key[64];
-    char header_value[64];
+    char header_value[256];
     // We store the origin so we can reply back with it.
     char origin[64];
     size_t content_length;
@@ -98,10 +102,12 @@ typedef struct {
 
 static wifi_radio_error_t _wifi_status = WIFI_RADIO_ERROR_NONE;
 
-// Store last status state to compute dirty.
+#if CIRCUITPY_STATUS_BAR
+// Store various last states to compute if status bar needs an update.
 static bool _last_enabled = false;
 static uint32_t _last_ip = 0;
 static wifi_radio_error_t _last_wifi_status = WIFI_RADIO_ERROR_NONE;
+#endif
 
 static mdns_server_obj_t mdns;
 static uint32_t web_api_port = 80;
@@ -189,12 +195,15 @@ STATIC void _update_encoded_ip(void) {
     }
 }
 
+#if CIRCUITPY_STATUS_BAR
 bool supervisor_web_workflow_status_dirty(void) {
     return common_hal_wifi_radio_get_enabled(&common_hal_wifi_radio_obj) != _last_enabled ||
            _encoded_ip != _last_ip ||
            _last_wifi_status != _wifi_status;
 }
+#endif
 
+#if CIRCUITPY_STATUS_BAR
 void supervisor_web_workflow_status(void) {
     _last_enabled = common_hal_wifi_radio_get_enabled(&common_hal_wifi_radio_obj);
     if (_last_enabled) {
@@ -227,6 +236,7 @@ void supervisor_web_workflow_status(void) {
         serial_write_compressed(translate("off"));
     }
 }
+#endif
 
 void supervisor_start_web_workflow(void) {
     #if CIRCUITPY_WEB_WORKFLOW && CIRCUITPY_WIFI
@@ -323,22 +333,31 @@ void supervisor_start_web_workflow(void) {
     #endif
 }
 
-static void _send_raw(socketpool_socket_obj_t *socket, const uint8_t *buf, int len) {
+void web_workflow_send_raw(socketpool_socket_obj_t *socket, const uint8_t *buf, int len) {
+    int total_sent = 0;
     int sent = -EAGAIN;
-    while (sent == -EAGAIN && common_hal_socketpool_socket_get_connected(socket)) {
-        sent = socketpool_socket_send(socket, buf, len);
+    while ((sent == -EAGAIN || (sent > 0 && total_sent < len)) &&
+           common_hal_socketpool_socket_get_connected(socket)) {
+        sent = socketpool_socket_send(socket, buf + total_sent, len - total_sent);
+        if (sent > 0) {
+            total_sent += sent;
+            if (total_sent < len) {
+                // Yield so that network code can run.
+                port_yield();
+            }
+        }
     }
-    if (sent < len) {
+    if (total_sent < len) {
         ESP_LOGE(TAG, "short send %d %d", sent, len);
     }
 }
 
 STATIC void _print_raw(void *env, const char *str, size_t len) {
-    _send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)str, (size_t)len);
+    web_workflow_send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)str, (size_t)len);
 }
 
 static void _send_str(socketpool_socket_obj_t *socket, const char *str) {
-    _send_raw(socket, (const uint8_t *)str, strlen(str));
+    web_workflow_send_raw(socket, (const uint8_t *)str, strlen(str));
 }
 
 // The last argument must be NULL! Otherwise, it won't stop.
@@ -357,15 +376,15 @@ static void _send_strs(socketpool_socket_obj_t *socket, ...) {
 static void _send_chunk(socketpool_socket_obj_t *socket, const char *chunk) {
     mp_print_t _socket_print = {socket, _print_raw};
     mp_printf(&_socket_print, "%X\r\n", strlen(chunk));
-    _send_raw(socket, (const uint8_t *)chunk, strlen(chunk));
-    _send_raw(socket, (const uint8_t *)"\r\n", 2);
+    web_workflow_send_raw(socket, (const uint8_t *)chunk, strlen(chunk));
+    web_workflow_send_raw(socket, (const uint8_t *)"\r\n", 2);
 }
 
 STATIC void _print_chunk(void *env, const char *str, size_t len) {
     mp_print_t _socket_print = {env, _print_raw};
     mp_printf(&_socket_print, "%X\r\n", len);
-    _send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)str, len);
-    _send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)"\r\n", 2);
+    web_workflow_send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)str, len);
+    web_workflow_send_raw((socketpool_socket_obj_t *)env, (const uint8_t *)"\r\n", 2);
 }
 
 // A bit of a misnomer because it sends all arguments as one chunk.
@@ -498,10 +517,10 @@ static void _reply_access_control(socketpool_socket_obj_t *socket, _request *req
         "HTTP/1.1 204 No Content\r\n",
         "Content-Length: 0\r\n",
         "Access-Control-Expose-Headers: Access-Control-Allow-Methods\r\n",
-        "Access-Control-Allow-Headers: X-Timestamp, Content-Type, Authorization\r\n",
+        "Access-Control-Allow-Headers: X-Timestamp, X-Destination, Content-Type, Authorization\r\n",
         "Access-Control-Allow-Methods:GET, OPTIONS", NULL);
     if (!_usb_active()) {
-        _send_str(socket, ", PUT, DELETE");
+        _send_str(socket, ", PUT, DELETE, MOVE");
         #if CIRCUITPY_USB_MSC
         usb_msc_unlock();
         #endif
@@ -541,6 +560,15 @@ static void _reply_conflict(socketpool_socket_obj_t *socket, _request *request) 
         "Content-Length: 19\r\n", NULL);
     _cors_header(socket, request);
     _send_str(socket, "\r\nUSB storage active.");
+}
+
+
+static void _reply_precondition_failed(socketpool_socket_obj_t *socket, _request *request) {
+    _send_strs(socket,
+        "HTTP/1.1 412 Precondition Failed\r\n",
+        "Content-Length: 0\r\n", NULL);
+    _cors_header(socket, request);
+    _send_str(socket, "\r\n");
 }
 
 static void _reply_payload_too_large(socketpool_socket_obj_t *socket, _request *request) {
@@ -632,7 +660,7 @@ static void _reply_directory_json(socketpool_socket_obj_t *socket, _request *req
             (file_info.fdate >> 5) & 0xf,
             file_info.fdate & 0x1f,
             file_info.ftime >> 11,
-            (file_info.ftime >> 5) & 0x1f,
+            (file_info.ftime >> 5) & 0x3f,
             (file_info.ftime & 0x1f) * 2);
 
         // Manually append zeros to make the time nanoseconds. Support for printing 64 bit numbers
@@ -747,44 +775,19 @@ static void _reply_with_version_json(socketpool_socket_obj_t *socket, _request *
         "\"creator_id\": %u, "
         "\"creation_id\": %u, "
         "\"hostname\": \"%s\", "
-        "\"port\": %d, "
-        "\"ip\": \"%s\"}", CIRCUITPY_CREATOR_ID, CIRCUITPY_CREATION_ID, hostname, web_api_port, _our_ip_encoded);
+        "\"port\": %d, ", CIRCUITPY_CREATOR_ID, CIRCUITPY_CREATION_ID, hostname, web_api_port, _our_ip_encoded);
+    #if CIRCUITPY_MICROCONTROLLER && COMMON_HAL_MCU_PROCESSOR_UID_LENGTH > 0
+    uint8_t raw_id[COMMON_HAL_MCU_PROCESSOR_UID_LENGTH];
+    common_hal_mcu_processor_get_uid(raw_id);
+    mp_printf(&_socket_print, "\"UID\": \"");
+    for (uint8_t i = 0; i < COMMON_HAL_MCU_PROCESSOR_UID_LENGTH; i++) {
+        mp_printf(&_socket_print, "%02X", raw_id[i]);
+    }
+    mp_printf(&_socket_print, "\", ");
+    #endif
+    mp_printf(&_socket_print, "\"ip\": \"%s\"}", _our_ip_encoded);
     // Empty chunk signals the end of the response.
     _send_chunk(socket, "");
-}
-
-// Copied from ble file_transfer.c. We should share it.
-STATIC FRESULT _delete_directory_contents(FATFS *fs, const TCHAR *path) {
-    FF_DIR dir;
-    FRESULT res = f_opendir(fs, &dir, path);
-    FILINFO file_info;
-    // Check the stack since we're putting paths on it.
-    if (mp_stack_usage() >= MP_STATE_THREAD(stack_limit)) {
-        return FR_INT_ERR;
-    }
-    while (res == FR_OK) {
-        res = f_readdir(&dir, &file_info);
-        if (res != FR_OK || file_info.fname[0] == '\0') {
-            break;
-        }
-        size_t pathlen = strlen(path);
-        size_t fnlen = strlen(file_info.fname);
-        TCHAR full_path[pathlen + 1 + fnlen];
-        memcpy(full_path, path, pathlen);
-        full_path[pathlen] = '/';
-        size_t full_pathlen = pathlen + 1 + fnlen;
-        memcpy(full_path + pathlen + 1, file_info.fname, fnlen);
-        full_path[full_pathlen] = '\0';
-        if ((file_info.fattrib & AM_DIR) != 0) {
-            res = _delete_directory_contents(fs, full_path);
-        }
-        if (res != FR_OK) {
-            break;
-        }
-        res = f_unlink(fs, full_path);
-    }
-    f_closedir(&dir);
-    return res;
 }
 
 // FATFS has a two second timestamp resolution but the BLE API allows for nanosecond resolution.
@@ -916,6 +919,7 @@ static void _write_file_and_reply(socketpool_socket_obj_t *socket, _request *req
 
 #define STATIC_FILE(filename) extern uint32_t filename##_length; extern uint8_t filename[]; extern const char *filename##_content_type;
 
+STATIC_FILE(code_html);
 STATIC_FILE(directory_html);
 STATIC_FILE(directory_js);
 STATIC_FILE(welcome_html);
@@ -938,7 +942,7 @@ static void _reply_static(socketpool_socket_obj_t *socket, _request *request, co
         "Content-Length: ", encoded_len, "\r\n",
         "Content-Type: ", content_type, "\r\n",
         "\r\n", NULL);
-    _send_raw(socket, response, response_len);
+    web_workflow_send_raw(socket, response, response_len);
 }
 
 #define _REPLY_STATIC(socket, request, filename) _reply_static(socket, request, filename, filename##_length, filename##_content_type)
@@ -976,6 +980,28 @@ static uint8_t _hex2nibble(char h) {
     return h - 'a' + 0xa;
 }
 
+// Decode percent encoding in place. Only do this once on a string!
+static void _decode_percents(char *str) {
+    size_t o = 0;
+    size_t i = 0;
+    size_t startlen = strlen(str);
+    while (i < startlen) {
+        if (str[i] == '%') {
+            str[o] = _hex2nibble(str[i + 1]) << 4 | _hex2nibble(str[i + 2]);
+            i += 3;
+        } else {
+            if (i != o) {
+                str[o] = str[i];
+            }
+            i += 1;
+        }
+        o += 1;
+    }
+    if (o < i) {
+        str[o] = '\0';
+    }
+}
+
 static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
     if (request->redirect) {
         _reply_redirect(socket, request, request->path);
@@ -996,23 +1022,8 @@ static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
             // Decode any percent encoded bytes so that we're left with UTF-8.
             // We only do this on /fs/ paths and after redirect so that any
             // path echoing we do stays encoded.
-            size_t o = 0;
-            size_t i = 0;
-            while (i < strlen(request->path)) {
-                if (request->path[i] == '%') {
-                    request->path[o] = _hex2nibble(request->path[i + 1]) << 4 | _hex2nibble(request->path[i + 2]);
-                    i += 3;
-                } else {
-                    if (i != o) {
-                        request->path[o] = request->path[i];
-                    }
-                    i += 1;
-                }
-                o += 1;
-            }
-            if (o < i) {
-                request->path[o] = '\0';
-            }
+            _decode_percents(request->path);
+
             char *path = request->path + 3;
             size_t pathlen = strlen(path);
             FATFS *fs = filesystem_circuitpy();
@@ -1037,7 +1048,7 @@ static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
                 FRESULT result = f_stat(fs, path, &file);
                 if (result == FR_OK) {
                     if ((file.fattrib & AM_DIR) != 0) {
-                        result = _delete_directory_contents(fs, path);
+                        result = supervisor_workflow_delete_directory_contents(fs, path);
                     }
                     if (result == FR_OK) {
                         result = f_unlink(fs, path);
@@ -1054,6 +1065,34 @@ static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
                     _reply_server_error(socket, request);
                 } else {
                     _reply_no_content(socket, request);
+                    return true;
+                }
+            } else if (strcasecmp(request->method, "MOVE") == 0) {
+                if (_usb_active()) {
+                    _reply_conflict(socket, request);
+                    return false;
+                }
+
+                _decode_percents(request->destination);
+                char *destination = request->destination + 3;
+                size_t destinationlen = strlen(destination);
+                if (destination[destinationlen - 1] == '/' && destinationlen > 1) {
+                    destination[destinationlen - 1] = '\0';
+                }
+
+                FRESULT result = f_rename(fs, path, destination);
+                #if CIRCUITPY_USB_MSC
+                usb_msc_unlock();
+                #endif
+                if (result == FR_EXIST) { // File exists and won't be overwritten.
+                    _reply_precondition_failed(socket, request);
+                } else if (result == FR_NO_PATH || result == FR_NO_FILE) { // Missing higher directories or target file.
+                    _reply_missing(socket, request);
+                } else if (result != FR_OK) {
+                    ESP_LOGE(TAG, "move error %d %s", result, path);
+                    _reply_server_error(socket, request);
+                } else {
+                    _reply_created(socket, request);
                     return true;
                 }
             } else if (directory) {
@@ -1088,7 +1127,7 @@ static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
                         truncate_time(request->timestamp_ms * 1000000, &fattime);
                         override_fattime(fattime);
                     }
-                    FRESULT result = f_mkdir(fs, path);
+                    FRESULT result = supervisor_workflow_mkdir_parents(fs, path);
                     override_fattime(0);
                     #if CIRCUITPY_USB_MSC
                     usb_msc_unlock();
@@ -1133,6 +1172,8 @@ static bool _reply(socketpool_socket_obj_t *socket, _request *request) {
         } else {
             _REPLY_STATIC(socket, request, edit_html);
         }
+    } else if (strcmp(request->path, "/code/") == 0) {
+        _REPLY_STATIC(socket, request, code_html);
     } else if (strncmp(request->path, "/cp/", 4) == 0) {
         const char *path = request->path + 3;
         if (strcasecmp(request->method, "OPTIONS") == 0) {
@@ -1308,6 +1349,8 @@ static void _process_request(socketpool_socket_obj_t *socket, _request *request)
                     } else if (strcasecmp(request->header_key, "Sec-WebSocket-Key") == 0 &&
                                strlen(request->header_value) == 24) {
                         strcpy(request->websocket_key, request->header_value);
+                    } else if (strcasecmp(request->header_key, "X-Destination") == 0) {
+                        strcpy(request->destination, request->header_value);
                     }
                     ESP_LOGI(TAG, "Header %s %s", request->header_key, request->header_value);
                 } else if (request->offset > sizeof(request->header_value) - 1) {

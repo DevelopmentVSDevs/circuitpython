@@ -71,12 +71,6 @@ uint8_t display_init_sequence[] = {
 
 
 void board_init(void) {
-    // THIS SHOULD BE HANDLED BY espressif_board_reset_pin_number(), but it is not working.
-    // TEMPORARY FIX UNTIL IT'S DIAGNOSED.
-    common_hal_never_reset_pin(&pin_GPIO21);
-    gpio_set_direction(21, GPIO_MODE_DEF_OUTPUT);
-    gpio_set_level(21, true);
-
     busio_spi_obj_t *spi = common_hal_board_create_spi(0);
     displayio_fourwire_obj_t *bus = &displays[0].fourwire_bus;
     bus->base.type = &displayio_fourwire_type;
@@ -93,9 +87,6 @@ void board_init(void) {
         );
     displayio_display_obj_t *display = &displays[0].display;
     display->base.type = &displayio_display_type;
-
-    // workaround as board_init() is called before reset_port() in main.c
-///    pwmout_reset();
 
     common_hal_displayio_display_construct(
         display,
@@ -129,36 +120,17 @@ void board_init(void) {
         );
 }
 
-bool board_requests_safe_mode(void) {
-    return false;
-}
-
 bool espressif_board_reset_pin_number(gpio_num_t pin_number) {
     // Override the I2C/TFT power pin reset to prevent resetting the display.
     if (pin_number == 21) {
         // Turn on TFT and I2C
-        gpio_set_direction(21, GPIO_MODE_DEF_OUTPUT);
-        gpio_set_level(21, true);
-        return true;
-    }
-    // Pull LED down on reset rather than the default up
-    if (pin_number == 13) {
-        gpio_config_t cfg = {
-            .pin_bit_mask = BIT64(pin_number),
-            .mode = GPIO_MODE_DISABLE,
-            .pull_up_en = false,
-            .pull_down_en = true,
-            .intr_type = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&cfg);
+        gpio_set_direction(pin_number, GPIO_MODE_DEF_OUTPUT);
+        gpio_set_level(pin_number, true);
         return true;
     }
     return false;
 }
 
-void reset_board(void) {
-}
+// Use the MP_WEAK supervisor/shared/board.c versions of routines not defined here.
 
-void board_deinit(void) {
-    // TODO: Should we turn off the display when asleep?
-}
+// TODO: Should we turn off the display when asleep, in board_deinit()?
